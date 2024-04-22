@@ -1,0 +1,5 @@
+*	*	*	*	*	curl -k https://openchat-api-v2.hanatour.com/api/v1/corn/app-parking 2>&1
+00	00	*	*	*	curl -k  https://openchat-api-v2.hanatour.com/api/v1/corn/makemediaexpired 2>&1
+*/15      *       *       *       *       echo "$(date)" >>  /var/log/cron.log 2>&1
+
+
