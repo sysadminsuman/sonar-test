@@ -1,0 +1,45 @@
+import { userService } from "../../services/index.js";
+import { StatusError } from "../../config/index.js";
+import { getCurrentDateTime } from "../../helpers/index.js";
+
+/**
+ * Get user details
+ * @param req
+ * @param res
+ * @param next
+ */
+export const agreement = async (req, res, next) => {
+  try {
+    let reqBody = req.body;
+    // get user details by login id
+    const userDetails = await userService.getByCustomerID(reqBody.id);
+    if (!userDetails) throw StatusError.badRequest("userNotExists");
+    let data = {
+      update_date: await getCurrentDateTime(),
+    };
+    const L01 = reqBody.L01;
+    const P07 = reqBody.P07;
+    const P08 = reqBody.P08;
+
+    if (L01 === true || L01 === false) {
+      data["is_location_enabled"] = reqBody.L01 ? "y" : "n";
+    }
+    if (P07 === true || P07 === false) {
+      data["is_overall_notification"] = reqBody.P07 ? "y" : "n";
+    }
+    if (P08 === true || P08 === false) {
+      data["is_room_creation_notification"] = reqBody.P08 ? "y" : "n";
+    }
+
+    // data update
+    await userService.updateUser(data, userDetails.id);
+
+    res.status(200).send({
+      success: true,
+      id: reqBody.id,
+      message: res.__("userUpdateSuccessfull"),
+    });
+  } catch (error) {
+    next(error);
+  }
+};

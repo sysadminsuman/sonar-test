@@ -1,0 +1,430 @@
+import admin from "firebase-admin";
+import Handlebars from "handlebars";
+import fs from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { notificationTemplateService, userDeviceService } from "../index.js";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const serviceAccount = JSON.parse(
+  fs.readFileSync(join(__dirname, "../../assets/firebase/service-account.json")),
+);
+// make object from json
+const params = {
+  type: serviceAccount.type,
+  projectId: serviceAccount.project_id,
+  privateKeyId: serviceAccount.private_key_id,
+  privateKey: serviceAccount.private_key,
+  clientEmail: serviceAccount.client_email,
+  clientId: serviceAccount.client_id,
+  authUri: serviceAccount.auth_uri,
+  tokenUri: serviceAccount.token_uri,
+  authProviderX509CertUrl: serviceAccount.auth_provider_x509_cert_url,
+  clientC509CertUrl: serviceAccount.client_x509_cert_url,
+};
+
+// firebase admin initialize
+admin.initializeApp({
+  credential: admin.credential.cert(params),
+});
+
+/**
+ * Send push notifications to user devices
+ */
+export const sendNotification = async (
+  userIds,
+  notificationTemplateType,
+  substitutions = {},
+  data = {},
+) => {
+  // get template from db
+  const notificationTemplate = await notificationTemplateService.getTemplate(
+    notificationTemplateType,
+  );
+  if (notificationTemplate) {
+    // prepare dynamic notification template
+    const template = Handlebars.compile(notificationTemplate.text);
+
+    notificationTemplate.text = template(substitutions, {
+      data: {
+        intl: {
+          locales: "en-US",
+        },
+      },
+    });
+
+    notificationTemplate.text = notificationTemplate.text.replace("&lt;", "<");
+    notificationTemplate.text = notificationTemplate.text.replace("&gt;", ">");
+    notificationTemplate.text = notificationTemplate.text.substring(0, 500);
+
+    if (userIds.length !== 0) {
+      // get user registered devices
+      const devices = await userDeviceService.getDevicesForUsers(userIds, notificationTemplateType);
+      const androidTokens = [];
+      const iosTokens = [];
+      for (const device of devices) {
+        if (device.device_type == "android") {
+          androidTokens.push(device.device_token);
+        } else {
+          iosTokens.push(device.device_token);
+        }
+      }
+      // notification data payload for android
+      while (androidTokens.length > 0) {
+        let android_chunk = androidTokens.splice(0, 500);
+        Promise.all(
+          android_chunk.map((androidtoken) => {
+            const androidPayload = {
+              token: androidtoken,
+              data: {
+                type: notificationTemplate.type,
+                title: data.room_name,
+                body: notificationTemplate.text,
+                room_id: (data.room_id && data.room_id.toString()) || "",
+                room_name: data.room_name || "",
+                room_address: (data.room_address && data.room_address.toString()) || "",
+                conversation_id: (data.conversation_id && data.conversation_id.toString()) || "",
+                user_id: (data.user_id && data.user_id.toString()) || "",
+                profile_image: (data.profile_image && data.profile_image.toString()) || "",
+              },
+            };
+            // firebase service to send notification to android devices
+            admin
+              .messaging()
+              .send(androidPayload)
+              .then(() => {
+                console.log("Push notification sent ....!!!");
+              })
+              .catch((error) => {
+                console.log(error);
+              });
+          }),
+        );
+      }
+
+      // notification data payload for ios
+      while (iosTokens.length > 0) {
+        let ios_chunk = iosTokens.splice(0, 500);
+        Promise.all(
+          ios_chunk.map((iostoken) => {
+            const iosPayload = {
+              token: iostoken,
+              notification: {
+                title: data.room_name,
+                body: notificationTemplate.text,
+              },
+              data: {
+                type: notificationTemplate.type,
+                title: data.room_name,
+                body: notificationTemplate.text,
+                room_id: (data.room_id && data.room_id.toString()) || "",
+                room_name: data.room_name || "",
+                room_address: (data.room_address && data.room_address.toString()) || "",
+                conversation_id: (data.conversation_id && data.conversation_id.toString()) || "",
+                user_id: (data.user_id && data.user_id.toString()) || "",
+                profile_image: (data.profile_image && data.profile_image.toString()) || "",
+              },
+              apns: {
+                payload: {
+                  aps: {
+                    sound: "default",
+                    content_available: 1,
+                    mutable_content: 1,
+                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                  },
+                },
+              },
+            };
+            // firebase service to send notification to android devices
+            admin
+              .messaging()
+              .send(iosPayload)
+              .then(() => {
+                console.log("Push notification sent ....!!!");
+              })
+              .catch((error) => {
+                console.log(error);
+              });
+          }),
+        );
+      }
+    }
+  }
+};
+
+/**
+ * Send push notifications to user devices
+ */
+export const sendNotificationSetting = async (notificationTemplateType, data = {}) => {
+  // get template from db
+  const notificationTemplate = await notificationTemplateService.getTemplate(
+    notificationTemplateType,
+  );
+  if (notificationTemplate) {
+    // get user registered devices
+    const devices = await userDeviceService.getAllDevices();
+    const androidTokens = [];
+    const iosTokens = [];
+    for (const device of devices) {
+      if (device.device_type == "android") {
+        androidTokens.push(device.device_token);
+      } else {
+        iosTokens.push(device.device_token);
+      }
+    }
+    Promise.all(
+      androidTokens.map((androidtoken) => {
+        const androidPayload = {
+          token: androidtoken,
+          data: {
+            type: notificationTemplate.type,
+            android_latest_version: data.android_latest_version || "",
+            force_update: data.force_update || "",
+            body: notificationTemplate.text || "",
+            message: data.message || "",
+            app_parking: data.app_parking || "",
+            after_termination: data.after_termination || "",
+            after_termination_image: data.after_termination_image || "",
+          },
+        };
+        // firebase service to send notification to android devices
+        admin
+          .messaging()
+          .send(androidPayload)
+          .then(() => {
+            console.log("Push notification sent ....!!!");
+          })
+          .catch((error) => {
+            console.log(error);
+          });
+      }),
+    );
+
+    ///////ios
+    Promise.all(
+      iosTokens.map((iostoken) => {
+        const iospayload = {
+          token: iostoken,
+          data: {
+            type: notificationTemplate.type,
+            android_latest_version: data.android_latest_version || "",
+            force_update: data.force_update || "",
+            body: notificationTemplate.text || "",
+            message: data.message || "",
+            app_parking: data.app_parking || "",
+            after_termination: data.after_termination || "",
+            after_termination_image: data.after_termination_image || "",
+          },
+          apns: {
+            payload: {
+              aps: {
+                content_available: 1,
+                mutable_content: 1,
+              },
+            },
+          },
+        };
+        // firebase service to send notification to android devices
+        admin
+          .messaging()
+          .send(iospayload)
+          .then(() => {
+            console.log("Push notification sent ....!!!");
+          })
+          .catch((error) => {
+            console.log(error);
+          });
+      }),
+    );
+  }
+};
+
+export const sendNotificationSystemSetting = async (notificationTemplateType, data = {}) => {
+  // get template from db
+  const notificationTemplate = await notificationTemplateService.getTemplate(
+    notificationTemplateType,
+  );
+  if (notificationTemplate) {
+    // get user registered devices
+    const devices = await userDeviceService.getAllDevices();
+    const androidTokens = [];
+    const iosTokens = [];
+    for (const device of devices) {
+      if (device.device_type == "android") {
+        androidTokens.push(device.device_token);
+      } else {
+        iosTokens.push(device.device_token);
+      }
+    }
+    Promise.all(
+      androidTokens.map((androidtoken) => {
+        const androidpayload = {
+          token: androidtoken,
+          data: {
+            type: notificationTemplate.type,
+            title: "하나오픈챗",
+            body: notificationTemplate.text,
+            message: data.message || "",
+            app_parking: data.app_parking || "",
+          },
+        };
+        // firebase service to send notification to android devices
+        admin
+          .messaging()
+          .send(androidpayload)
+          .then(() => {
+            console.log("Push notification sent ....!!!");
+          })
+          .catch((error) => {
+            console.log(error);
+          });
+      }),
+    );
+    ///ios
+    Promise.all(
+      iosTokens.map((iostoken) => {
+        const iospayload = {
+          token: iostoken,
+          notification: {
+            title: "하나오픈챗",
+            body: notificationTemplate.text,
+          },
+          data: {
+            type: notificationTemplate.type,
+            title: "하나오픈챗",
+            body: notificationTemplate.text,
+            message: data.message || "",
+            app_parking: data.app_parking || "",
+          },
+          apns: {
+            payload: {
+              aps: {
+                sound: "default",
+                content_available: 1,
+                mutable_content: 1,
+                clickAction: "FLUTTER_NOTIFICATION_CLICK",
+              },
+            },
+          },
+        };
+        // firebase service to send notification to android devices
+        admin
+          .messaging()
+          .send(iospayload)
+          .then(() => {
+            console.log("Push notification sent ....!!!");
+          })
+          .catch((error) => {
+            console.log(error);
+          });
+      }),
+    );
+  }
+};
+
+export const sendWithdrawnNotification = async (
+  userIds,
+  notificationTemplateType,
+  substitutions = {},
+  data = {},
+) => {
+  // get template from db
+  const notificationTemplate = await notificationTemplateService.getTemplate(
+    notificationTemplateType,
+  );
+  if (notificationTemplate) {
+    // prepare dynamic notification template
+    const template = Handlebars.compile(notificationTemplate.text);
+
+    notificationTemplate.text = template(substitutions, {
+      data: {
+        intl: {
+          locales: "en-US",
+        },
+      },
+    });
+
+    notificationTemplate.text = notificationTemplate.text.replace("&lt;", "<");
+    notificationTemplate.text = notificationTemplate.text.replace("&gt;", ">");
+
+    if (userIds.length !== 0) {
+      // get user registered devices
+      const devices = await userDeviceService.getDevicesForUsers(userIds, notificationTemplateType);
+      const androidTokens = [];
+      const iosTokens = [];
+      for (const device of devices) {
+        if (device.device_type == "android") {
+          androidTokens.push(device.device_token);
+        } else {
+          iosTokens.push(device.device_token);
+        }
+      }
+      Promise.all(
+        androidTokens.map((androidtoken) => {
+          const androidpayload = {
+            token: androidtoken,
+            data: {
+              type: notificationTemplate.type,
+              title: data.room_name,
+              body: notificationTemplate.text,
+              room_id: (data.room_id && data.room_id.toString()) || "",
+              room_name: data.room_name || "",
+              room_address: (data.room_address && data.room_address.toString()) || "",
+              conversation_id: (data.conversation_id && data.conversation_id.toString()) || "",
+              user_id: (data.user_id && data.user_id.toString()) || "",
+              profile_image: (data.profile_image && data.profile_image.toString()) || "",
+            },
+          };
+          // firebase service to send notification to android devices
+          admin
+            .messaging()
+            .send(androidpayload)
+            .then(() => {
+              console.log("Push notification sent ....!!!");
+            })
+            .catch((error) => {
+              console.log(error);
+            });
+        }),
+      );
+
+      ///ios
+      Promise.all(
+        iosTokens.map((iostoken) => {
+          const iospayload = {
+            token: iostoken,
+            data: {
+              type: notificationTemplate.type,
+              title: data.room_name,
+              body: notificationTemplate.text,
+              room_id: (data.room_id && data.room_id.toString()) || "",
+              room_name: data.room_name || "",
+              room_address: (data.room_address && data.room_address.toString()) || "",
+              conversation_id: (data.conversation_id && data.conversation_id.toString()) || "",
+              user_id: (data.user_id && data.user_id.toString()) || "",
+              profile_image: (data.profile_image && data.profile_image.toString()) || "",
+            },
+            apns: {
+              iospayload: {
+                aps: {
+                  content_available: 1,
+                  mutable_content: 1,
+                },
+              },
+            },
+          };
+          // firebase service to send notification to android devices
+          admin
+            .messaging()
+            .send(iospayload)
+            .then(() => {
+              console.log("Push notification sent ....!!!");
+            })
+            .catch((error) => {
+              console.log(error);
+            });
+        }),
+      );
+    }
+  }
+};
